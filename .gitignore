@@ -1,0 +1,7 @@
+./notes/*
+venv
+data/
+.idea/
+notes/
+models/
+runs/
