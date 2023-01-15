@@ -85,7 +85,7 @@ if __name__ == "__main__":
 
         optical_flow = dense_optical_flow(path1=current_frame.path, path2=frame.path)
         current_frame = frame
-        current_cars = cars.values()
+        current_cars = list(cars.values())
 
     """
         For each found car, associate an ID.
