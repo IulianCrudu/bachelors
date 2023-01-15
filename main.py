@@ -1,108 +1,107 @@
-from utils import *
+from typing import Dict, List, Tuple, Union
+from uuid import UUID
+from torch import Tensor
+
+from vehicle_tracking import vehicle_tracking
+from optical_flow import dense_optical_flow
+
+from utils import Car, Coordinate
 
 
-device = torch.device('cpu')
+def corners_from_coordinate(coordinate_list: Union[List[float], Tensor]) -> Tuple[Coordinate, Coordinate]:
+    top_left = Coordinate(x=int(coordinate_list[0]), y=int(coordinate_list[1]))
+    bottom_right = Coordinate(x=int(coordinate_list[2]), y=int(coordinate_list[3]))
+    return top_left, bottom_right
 
 
-def load_model():
-    model = torch.jit.load("models/yolopv2.pt", map_location='cpu')
-    model = model.to(device)
-    model.eval()
-
-    return model
+# TODO: how do I compute the cars lost from frame1 to frame2?
 
 
 if __name__ == "__main__":
-    source = "data/data_tracking_image_2 KITTI/testing/image_02/0000/000000.png"
-    # source = "data/leftImg8bit_trainvaltest/leftImg8bit/test/berlin/berlin_000000_000019_leftImg8bit.png"
-    imgsz = 640
-    stride = 32
-    project = "runs/detect"
-    name = "exp"
-    exist_ok = True
-    conf_thres = 0.3
-    iou_thres = 0.45
-    agnostic_nms = True
-    save_txt = True
-    save_conf = False
-    save_img = True
+    source = "data/test/"
+    frames = vehicle_tracking(source, save_source="runs/detect/test")
 
-    model = load_model()
-    save_dir = Path(increment_path(Path(project) / name, exist_ok=exist_ok))  # increment run
+    prev_frame = frames[0]
+    current_frame = frames[1]
+    cars: Dict[UUID, Car] = {}
+    removed_cars = 0
 
-    dataset = LoadImages(source, img_size=imgsz, stride=stride)
+    for coordinate in current_frame.coordinates:
+        top_left_corner, bottom_right_corner = corners_from_coordinate(coordinate)
+        car = Car(
+            top_left_corner=top_left_corner,
+            bottom_right_corner=bottom_right_corner
+        )
+        cars[car.id] = car
+    optical_flow = dense_optical_flow(path1=prev_frame.path, path2=current_frame.path)
+    current_cars = list(cars.values())
 
-    for path, img, im0s, vid_cap in dataset:
-        img = torch.from_numpy(img).to(device)
-        img = img.float()  # uint8 to fp16/32
-        img /= 255.0  # 0 - 255 to 0.0 - 1.0
+    for frame in frames[2:]:
+        # Predict the location of each car in the next frame
+        for car in current_cars:
+            top_left_vector = optical_flow[car.top_left_corner.y][car.top_left_corner.x]
+            bottom_right_vector = optical_flow[car.bottom_right_corner.y][car.bottom_right_corner.x]
 
-        if img.ndimension() == 3:
-            img = img.unsqueeze(0)
+            predicted_top_left = Coordinate(
+                x=car.top_left_corner.x + top_left_vector[0],
+                y=car.top_left_corner.y + top_left_vector[1],
+            )
+            predicted_bottom_right = Coordinate(
+                x=car.bottom_right_corner.x + bottom_right_vector[0],
+                y=car.bottom_right_corner.y + bottom_right_vector[1],
+            )
 
-        # Inference
-        [pred, anchor_grid], seg, ll = model(img)
+            # Try to match the predictions to one of the cars in the frame
 
-        # waste time: the incompatibility of  torch.jit.trace causes extra time consumption in demo version
-        # but this problem will not appear in offical version
-        pred = split_for_trace_model(pred, anchor_grid)
+            found = False
+            count = 0
+            for coordinate in frame.coordinates:
+                # TODO:
+                #  avoid using the same coordinate for 2+ cars
+                #       this also means that the new cars from the frame are not added
+                #       have all the frames in a set, once used pop it out from the set, at the end of this loop all the coordinates that are left are new cars
+                #  if multiple coordinates match the same car, pick the closest one
 
-        # Apply NMS
-        pred = non_max_suppression(pred, conf_thres, iou_thres, agnostic=agnostic_nms)
+                top_left_corner, bottom_right_corner = corners_from_coordinate(coordinate)
 
-        da_seg_mask = driving_area_mask(seg)
-        ll_seg_mask = lane_line_mask(ll)
+                if (
+                    predicted_top_left.is_equal_with_error(top_left_corner)
+                    and predicted_bottom_right.is_equal_with_error(bottom_right_corner)
+                ):
+                    count += 1
+                    if count == 1:
+                        car.top_left_corner = top_left_corner
+                        car.bottom_right_corner = bottom_right_corner
+                        found = True
+                    # break
 
-        # Process detections
-        for i, det in enumerate(pred):  # detections per image
+            if count > 1:
+                print(f"Found multiple coordinates for car {car}.")
 
-            p, s, im0, frame = path, '', im0s, getattr(dataset, 'frame', 0)
+            if not found:
+                print(f"Car {car} not found.")
+                del cars[car.id]
+                removed_cars += 1
 
-            p = Path(p)  # to Path
-            save_path = str(save_dir / p.name)  # img.jpg
-            txt_path = str(save_dir / 'labels' / p.stem) + ('' if dataset.mode == 'image' else f'_{frame}')  # img.txt
-            s += '%gx%g ' % img.shape[2:]  # print string
-            gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
-            if len(det):
-                # Rescale boxes from img_size to im0 size
-                det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
+        optical_flow = dense_optical_flow(path1=current_frame.path, path2=frame.path)
+        current_frame = frame
+        current_cars = cars.values()
 
-                # Print results
-                for c in det[:, -1].unique():
-                    n = (det[:, -1] == c).sum()  # detections per class
-                    # s += f"{n} {names[int(c)]}{'s' * (n > 1)}, "  # add to string
+    """
+        For each found car, associate an ID.
+        
+        Apply optical flow between 2 consecutive frames.
+        In the 3rd frame, check whether the car exists on the expected location(by using the vectors from the optical flow)
+        If it exists, we know it's the same car.
+    """
+    # for image in images[1:]:
+    #     prev_path, prev_coordinates = prev_image.path, prev_image.coordinates
+    #     path, coordinates = image.path, image.coordinates
+    #
+    #     # Compute
+    #     dense_optical_flow(prev_path, path)
+    #
+    #     prev_image = image
+    #
 
-                # Write results
-                for *xyxy, conf, cls in reversed(det):
-                    if save_txt:  # Write to file
-                        xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
-                        line = (cls, *xywh, conf) if save_conf else (cls, *xywh)  # label format
-                        with open(txt_path + '.txt', 'a') as f:
-                            f.write(('%g ' * len(line)).rstrip() % line + '\n')
-
-                    if save_img:  # Add bbox to image
-                        plot_one_box(xyxy, im0, line_thickness=3)
-
-            # Print time (inference)
-            show_seg_result(im0, (da_seg_mask, ll_seg_mask), is_demo=True)
-
-            # Save results (image with detections)
-            if save_img:
-                if dataset.mode == 'image':
-                    cv2.imwrite(save_path, im0)
-                    print(f" The image with the result is saved in: {save_path}")
-                else:  # 'video' or 'stream'
-                    if vid_path != save_path:  # new video
-                        vid_path = save_path
-                        if isinstance(vid_writer, cv2.VideoWriter):
-                            vid_writer.release()  # release previous video writer
-                        if vid_cap:  # video
-                            fps = vid_cap.get(cv2.CAP_PROP_FPS)
-                            # w = int(vid_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                            # h = int(vid_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                            w, h = im0.shape[1], im0.shape[0]
-                        else:  # stream
-                            fps, w, h = 30, im0.shape[1], im0.shape[0]
-                            save_path += '.mp4'
-                        vid_writer = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
-                    vid_writer.write(im0)
+    print(f"Cars counted: {len(cars) + removed_cars}")
