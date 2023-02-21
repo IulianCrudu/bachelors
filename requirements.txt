@@ -4,7 +4,7 @@ flake8-docstrings
 gmplot
 isort
 joblib
-matplotlib
+matplotlib~=3.6.2
 motmetrics
 mypy
 numpy~=1.23.5

@@ -3,5 +3,8 @@ venv
 data/
 .idea/
 notes/
-models/
+models/yolopv2.pt
 runs/
+CVDL.pdf
+github.pdf
+github.rtf
