@@ -22,7 +22,8 @@ def load_image(filename: Path) -> Image:
 
 
 def resize_image(image: Image) -> Image:
-    pass
+    new_size = (400, 400)
+    return image.resize(new_size)
 
 
 def unique_mask_values(idx: str, mask_dir: Path):
@@ -103,8 +104,8 @@ class Dataset(TorchDataset):
 
         assert len(img_file) == 1, f'Either no image or multiple images found for the ID {name}: {img_file}'
         assert len(mask_file) == 1, f'Either no mask or multiple masks found for the ID {name}: {mask_file}'
-        mask = load_image(mask_file[0])
-        img = load_image(img_file[0])
+        mask = resize_image(load_image(mask_file[0]))
+        img = resize_image(load_image(img_file[0]))
 
         assert img.size == mask.size, \
             f'Image and mask {name} should be the same size, but are {img.size} and {mask.size}'
@@ -119,13 +120,18 @@ class Dataset(TorchDataset):
 
 
 if __name__ == "__main__":
-    images_dir = Path("../../data/bdd/bdd100k/images/10k/train")
-    masks_dir = Path("../../data/bdd/bdd100k/labels/sem_seg/masks/train")
+    image = Path("../../data/bdd/bdd100k/images/10/test/ac6d4f42-00000000.jpg")
 
-    train_dataset = Dataset(images_dir=images_dir, masks_dir=masks_dir)
-    train_loader = DataLoader(train_dataset, shuffle=True, **dict(batch_size=1, num_workers=cpu_count(), pin_memory=True))
-
-    for batch in train_loader:
-        images, masks = batch['images'], batch["masks"]
-        print("masks", masks)
-        break
+    image = load_image(image)
+    image = resize_image(image)
+    image.show()
+    # images_dir = Path("../../data/bdd/bdd100k/images/10k/train")
+    # masks_dir = Path("../../data/bdd/bdd100k/labels/sem_seg/masks/train")
+    #
+    # train_dataset = Dataset(images_dir=images_dir, masks_dir=masks_dir)
+    # train_loader = DataLoader(train_dataset, shuffle=True, **dict(batch_size=1, num_workers=cpu_count(), pin_memory=True))
+    #
+    # for batch in train_loader:
+    #     images, masks = batch['images'], batch["masks"]
+    #     print("masks", masks)
+    #     break

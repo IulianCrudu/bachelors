@@ -14,8 +14,9 @@ from .model import UNet
 from .data_loader import Dataset
 from .dice_score import dice_loss
 
-images_dir = Path("data/bdd/bdd100k/images/10k/train")
-masks_dir = Path("data/bdd/bdd100k/labels/sem_seg/masks/train")
+images_dir = Path("data/bdd/bdd100k/images/10/test")
+masks_dir = Path("data/bdd/bdd100k/images/10/masks")
+# masks_dir = Path("data/bdd/bdd100k/labels/sem_seg/masks/train")
 checkpoints_dir = Path('./checkpoints/')
 
 val_images_dir = Path("data/bdd/bdd100k/images/10k/val")
